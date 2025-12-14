@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Gmail AI Copilot - Detail View Banner (Phase 1)",
+  "version": "0.1.0",
+  "description": "Inject a native-style suggestion banner under the subject in Gmail detail view.",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "Gmail AI Copilot",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
