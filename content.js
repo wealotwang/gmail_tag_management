@@ -66,27 +66,31 @@
 
   function getLabelsFromLabelSection(){
     var labels = [];
-    var nav = getNavRoot() || document.body;
-    var scope = nav;
-    var nodes = scope.querySelectorAll('div[role="treeitem"] a[href], a[href*="#label/"], a[href*="%23label%2F"], a[href*="label%3A"]');
-    if (DEBUG){
-      log('LabelSection: navRootFound', !!getNavRoot());
+    var nodes = document.body.querySelectorAll('div[data-tooltip], a[data-tooltip], span[data-tooltip]');
+    var blacklist = /^(收件箱|Inbox|星标|Starred|已延后|Snoozed|已发送|Sent|草稿|Drafts|垃圾邮件|Spam|已删除邮件|Trash|类别|Categories|管理标签|Manage labels|创建新标签|Create new label)$/i;
+    var preferred = [];
+    var others = [];
+    for (var i=0;i<nodes.length;i++){
+      var el = nodes[i];
+      var tip = (el.getAttribute('data-tooltip') || '').trim();
+      if (!tip) continue;
+      if (tip.length < 2 || tip.length > 50) continue;
+      if (blacklist.test(tip)) continue;
+      var navish = !!(el.closest('div.TK') || el.closest('div[role="navigation"]') || el.closest('div[aria-label*="标签"], div[aria-label*="Labels"]'));
+      if (navish) preferred.push(tip); else others.push(tip);
+    }
+    var set = new Set(preferred.concat(others));
+    labels = Array.from(set);
+    log('Tooltip Scan:', labels);
+    if (DEBUG && labels.length === 0){
       var sample = [];
       for (var s=0; s<Math.min(3, nodes.length); s++){
-        var a = nodes[s];
-        sample.push({text:(a.textContent||'').trim(), href:a.getAttribute('href')||'', aria:a.getAttribute('aria-label')||''});
+        var a2 = nodes[s];
+        sample.push({text:(a2.textContent||'').trim(), tooltip:a2.getAttribute('data-tooltip')||'', navish:!!(a2.closest('div.TK')||a2.closest('div[role="navigation"]'))});
       }
-      log('LabelSection: anchorCount', nodes.length);
-      log('LabelSection: anchorSamples', sample);
+      log('快照日志', { tooltipNodes: nodes.length, samples: sample, url: location.href });
     }
-    var blacklist = /^(收件箱|Inbox|已加星|Starred|已延后|Snoozed|重要|Important|已发送|Sent|草稿|Drafts|垃圾邮件|Spam|已删除邮件|Trash|全部|All Mail)$/i;
-    for (var j=0;j<nodes.length;j++){
-      var name = extractLabelTextFromAnchor(nodes[j]);
-      if (!name || blacklist.test(name)) continue;
-      labels.push(name);
-    }
-    if (DEBUG) log('LabelSection: parsedLabels', labels);
-    return Array.from(new Set(labels));
+    return labels;
   }
 
   /**
@@ -182,13 +186,23 @@
   }
 
   async function injectBanner(subjectEl) {
+    var cfg = { provider: 'DeepSeek', apiKey: '', model: 'deepseek-chat' };
+    try {
+      if (chrome && chrome.storage && chrome.storage.local){
+        var items = await new Promise(function(resolve){ chrome.storage.local.get(['config_api_key','config_provider','config_model'], resolve); });
+        cfg.apiKey = items['config_api_key'] || '';
+        cfg.provider = items['config_provider'] || 'Qwen';
+        cfg.model = items['config_model'] || (cfg.provider==='Qwen' ? 'qwen-plus' : 'deepseek-chat');
+      }
+    } catch(e){}
+    var labels = getLabelsFromLabelSection();
     var nav = getNavRoot();
-    if (nav){
+    if ((!labels || !labels.length) && nav){
       await expandHiddenLabels(nav);
       scrollNavLightly(nav);
       await waitForNavReady(nav);
+      labels = getLabelsFromLabelSection();
     }
-    var labels = getLabelsFromLabelSection();
     var emailPreview = getEmailContent();
     log('Labels(section)', labels);
     log('Email Context', emailPreview);
@@ -198,7 +212,14 @@
         url: location.href
       });
     }
-    try { if (chrome && chrome.storage && chrome.storage.local){ var obj={}; obj[LATEST_KEY] = { labels: labels, url: location.href, ts: Date.now() }; chrome.storage.local.set(obj); } } catch(e){}
+    try {
+      if (chrome && chrome.storage && chrome.storage.local){
+        var subjectText = (subjectEl && (subjectEl.textContent || '').trim()) || '';
+        var senderText = (function(){ var m = document.querySelector('div[role="main"]') || document.body; var s = m.querySelector('span.gD, span[email]'); return (s && (s.textContent||'').trim()) || ''; })();
+        var obj={}; obj[LATEST_KEY] = { labels: labels, url: location.href, ts: Date.now(), provider: cfg.provider, model: cfg.model, subject: subjectText, sender: senderText, body: emailPreview };
+        chrome.storage.local.set(obj);
+      }
+    } catch(e){}
 
     /**
      * TODO: Phase 2 - AI API Integration
@@ -206,7 +227,6 @@
      * 获取结构化建议标签。当前为随机从 labels 中选择或提示未检测到标签。
      */
     var labelToShow = labels.length ? labels[Math.floor(Math.random() * labels.length)] : '未检测到左侧标签';
-
     var banner = document.createElement('div');
     banner.id = 'ai-suggestion-banner';
     banner.className = 'ai-suggestion-banner';
@@ -222,9 +242,43 @@
     dismissBtn.className = 'ai-suggestion-banner__btn ai-suggestion-banner__btn--dismiss';
     dismissBtn.textContent = '忽略';
 
+    var settingsBtn = document.createElement('button');
+    settingsBtn.className = 'ai-suggestion-banner__btn';
+    settingsBtn.textContent = '设置';
+
     banner.appendChild(textSpan);
     banner.appendChild(confirmBtn);
     banner.appendChild(dismissBtn);
+    
+    if (!cfg.apiKey){
+      textSpan.textContent = '请先在设置页配置 AI 模型';
+      confirmBtn.style.display = 'none';
+      banner.appendChild(settingsBtn);
+      settingsBtn.addEventListener('click', function(){ try { chrome.runtime.openOptionsPage(); } catch(e){} });
+    } else {
+      textSpan.textContent = '⏳ AI 正在思考 (Qwen)...';
+      try {
+        var ctx = {
+          subject: (subjectEl && (subjectEl.textContent || '').trim()) || '',
+          sender: (function(){ var m = document.querySelector('div[role="main"]') || document.body; var s = m.querySelector('span.gD, span[email]'); return (s && (s.textContent||'').trim()) || ''; })(),
+          body: getEmailContent(),
+          labels: labels
+        };
+        log('Context Prepared', { labels: labels, subject: ctx.subject, sender: ctx.sender, bodyPreview: ctx.body });
+        var ai = await fetchAISuggestion(ctx, cfg.apiKey, cfg.provider, cfg.model);
+        var finalLabel = ai && typeof ai === 'string' ? ai.trim() : '';
+        if (!finalLabel) finalLabel = '未分类';
+        textSpan.textContent = '💡 建议归类为 [' + finalLabel + ']';
+        try {
+          if (chrome && chrome.storage && chrome.storage.local){ var obj2={}; obj2[LATEST_KEY] = { labels: labels, url: location.href, ts: Date.now(), provider: cfg.provider, model: cfg.model, subject: ctx.subject, sender: ctx.sender, body: ctx.body, aiLabel: finalLabel }; chrome.storage.local.set(obj2); }
+        } catch(e){}
+      } catch(e){
+        textSpan.textContent = '配置或网络异常，请在设置页检查 API Key';
+        try { banner.style.borderColor = '#d93025'; banner.style.background = '#fdecea'; textSpan.style.color = '#d93025'; } catch(_){}
+        banner.appendChild(settingsBtn);
+        settingsBtn.addEventListener('click', function(){ try { chrome.runtime.openOptionsPage(); } catch(e){} });
+      }
+    }
 
     var target = subjectEl.parentElement || subjectEl;
     target.insertAdjacentElement('afterend', banner);
@@ -260,6 +314,7 @@
 
   function maybeScheduleCheck() {
     if (checkScheduled) return;
+    if (!isDetailView()) return;
     checkScheduled = true;
     setTimeout(function() {
       checkScheduled = false;
@@ -272,6 +327,7 @@
     var observer = new MutationObserver(function(mutations) {
       for (var i = 0; i < mutations.length; i++) {
         if (mutations[i].addedNodes && mutations[i].addedNodes.length) {
+          if (!isDetailView()) { continue; }
           maybeScheduleCheck();
           break;
         }
@@ -322,6 +378,10 @@
   }
 
   async function runInteractiveScan(){
+    if (!isDetailView()){
+      warn('Interactive Scan skipped', { reason: 'not detail view', url: location.href });
+      return;
+    }
     var nav = getNavRoot();
     log('Interactive Scan: start', { navRoot: !!nav, url: location.href });
     if (nav){
@@ -332,6 +392,28 @@
     var labels = getLabelsFromLabelSection();
     log('Interactive Scan: labels', { count: labels.length, items: labels });
     try { if (chrome && chrome.storage && chrome.storage.local){ var obj={}; obj[LATEST_KEY] = { labels: labels, url: location.href, ts: Date.now() }; chrome.storage.local.set(obj); } } catch(e){}
+  }
+
+  async function fetchAISuggestion(context, apiKey, provider, model){
+    var endpoint = (function(){
+      var p = String(provider||'Qwen');
+      if (/^deepseek/i.test(p)) return 'https://api.deepseek.com/chat/completions';
+      if (/qwen|aliyun/i.test(p)) return 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+      return 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+    })();
+    var joinedLabels = Array.isArray(context.labels) ? context.labels.join(', ') : '';
+    var sysPrompt = '你是一个专业的邮件归类助手。请根据邮件内容，从给定的【候选标签列表】中选择最合适的一个标签。只能返回标签名称，不要包含任何解释。如果没有合适的，返回 \u2018未分类\u2019。\n【候选标签列表】：' + joinedLabels;
+    var userPrompt = '发件人: ' + (context.sender||'') + '\n' +
+                     '主题: ' + (context.subject||'') + '\n' +
+                     '正文摘要: ' + (context.body||'');
+    var defaultModel = (/^deepseek/i.test(String(provider||''))) ? 'deepseek-chat' : 'qwen-plus';
+    var payload = { model: (model||defaultModel), messages: [ { role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt } ], stream: false };
+    var res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey }, body: JSON.stringify(payload) });
+    if (!res.ok){ throw new Error('AI request failed: ' + res.status); }
+    var data = await res.json();
+    var txt = '';
+    try { txt = (((data || {}).choices || [])[0] || {}).message && (((data || {}).choices || [])[0] || {}).message.content || ''; } catch(e){}
+    return (txt || '').trim();
   }
 
   init();

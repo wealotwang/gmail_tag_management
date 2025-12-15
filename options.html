@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Gmail Copilot 设置中心</title>
+  <style>
+    :root{--c-primary:#1a73e8;--c-border:#dadce0;--c-text:#3c4043;--c-muted:#5f6368;--c-bg:#fff}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;background:var(--c-bg);color:var(--c-text)}
+    h1{font-size:18px;margin:0 0 12px}
+    .section{border:1px solid var(--c-border);border-radius:12px;padding:16px;margin-bottom:16px}
+    .section h2{font-size:14px;color:var(--c-muted);margin:0 0 12px}
+    .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+    label{font-size:12px;color:var(--c-muted)}
+    select,input,textarea{border:1px solid var(--c-border);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--c-text)}
+    textarea{min-height:180px;resize:vertical;line-height:1.45}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .footer{position:fixed;left:0;right:0;bottom:0;background:#f8f9fa;border-top:1px solid var(--c-border);padding:10px 16px;display:flex;justify-content:flex-end}
+    .btn{height:32px;padding:0 14px;border-radius:16px;border:1px solid var(--c-border);background:#fff;color:var(--c-primary);font-size:12px;cursor:pointer}
+    .btn-primary{background:var(--c-primary);border-color:var(--c-primary);color:#fff}
+    .row{display:flex;gap:8px;align-items:center}
+    .hint{font-size:12px;color:var(--c-muted)}
+    .toast{position:fixed;right:16px;bottom:56px;background:#202124;color:#fff;padding:8px 12px;border-radius:8px;font-size:12px;opacity:0;transform:translateY(6px);transition:all .2s}
+    .toast.show{opacity:1;transform:translateY(0)}
+  </style>
+</head>
+<body>
+  <h1>设置中心</h1>
+
+  <div class="section" id="section-model">
+    <h2>AI 模型配置</h2>
+    <div class="grid">
+      <div class="field">
+        <label for="provider">服务商 (Provider)</label>
+        <select id="provider">
+          <option value="DeepSeek">DeepSeek</option>
+          <option value="Qwen">Aliyun Qwen</option>
+          <option value="Custom">Custom</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="model">模型名称 (Model Name)</label>
+        <input id="model" type="text" placeholder="deepseek-chat" />
+      </div>
+    </div>
+    <div class="field">
+      <label for="apiKey">API Key</label>
+      <div class="row">
+        <input id="apiKey" type="password" placeholder="请输入 API Key" style="flex:1" />
+        <button class="btn" id="toggleKey">显示</button>
+      </div>
+      <div class="hint">Key 仅保存在浏览器本地 (chrome.storage.local)。</div>
+    </div>
+  </div>
+
+  <div class="section" id="section-rules">
+    <h2>规则引擎配置</h2>
+    <div class="field">
+      <label for="rules">规则编辑器 (JSON)</label>
+      <textarea id="rules" spellcheck="false"></textarea>
+      <div class="hint">请使用合法的 JSON；保存时会进行基本校验。</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button class="btn btn-primary" id="save">保存配置</button>
+  </div>
+
+  <div class="toast" id="toast">已保存</div>
+
+  <script src="options.js"></script>
+</body>
+</html>

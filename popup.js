@@ -14,7 +14,16 @@ function render(){
     const latest = items[LATEST_KEY];
     const txt = logs.map(l => `[${fmt(l.ts)}] ${l.level} ${l.tag} ${l.payload}`).join('\n');
     document.getElementById('log').textContent = txt || '暂无日志';
-    document.getElementById('status').textContent = latest ? `最近扫描: ${fmt(latest.ts)} | 标签数: ${(latest.labels||[]).length}` : '尚未扫描';
+    if (latest){
+      const info = [`最近扫描: ${fmt(latest.ts)}`, `标签数: ${(latest.labels||[]).length}`];
+      if (latest.provider) info.push(`Provider: ${latest.provider}`);
+      if (latest.model) info.push(`Model: ${latest.model}`);
+      if (latest.subject) info.push(`Subject: ${latest.subject}`);
+      if (latest.aiLabel) info.push(`AI建议: ${latest.aiLabel}`);
+      document.getElementById('status').textContent = info.join(' | ');
+    } else {
+      document.getElementById('status').textContent = '尚未扫描';
+    }
   });
 }
 
@@ -40,3 +49,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 render();
+
+document.getElementById('settings').addEventListener('click', () => {
+  try { chrome.runtime.openOptionsPage(); } catch(e) {}
+});

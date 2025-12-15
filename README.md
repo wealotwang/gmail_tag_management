@@ -18,12 +18,12 @@
 - `popup.html`、`popup.js`：弹窗 UI（展示日志、触发扫描、复制日志）。
 
 ## 关键能力与实现
-- 标签抓取（更稳健选择器）：
-  - 以 `div[role="treeitem"] a[href]` 与 `href` 中的 `#label/`、`%23label%2F`、`label%3A` 片段为主进行解析，尽量适配新版 Gmail 导航结构与虚拟化渲染。
-  - 黑名单过滤系统文件夹（如“收件箱/Inbox/已加星/Starred”等）。
+- 标签抓取（基于 data-tooltip 的扁平化策略）：
+  - 全局扫描 `document.body` 下的 `div/a/span[data-tooltip]`，直接以 `data-tooltip` 为候选标签名。
+  - 黑名单与长度过滤（排除系统保留词与异常长度），可选容器校验（`div.TK`/`role="navigation"`），但不作为硬性依赖。
   - 相关代码：
-    - `content.js:67-90` `getLabelsFromLabelSection()`
-    - `content.js:49-65` `extractLabelTextFromAnchor()`
+    - `content.js:67-94` `getLabelsFromLabelSection()`
+    - `content.js:41-44` 日志工具（写入到 `chrome.storage.local`）
 - 导航可视化与渲染触发：
   - 自动“展开更多/Show more”，并进行轻微滚动以触发虚拟列表渲染。
   - 相关代码：
@@ -42,9 +42,9 @@
     - `content.js:324-335` `runInteractiveScan()` 扫描流程
     - `popup.js:1-43` 弹窗展示与复制
 - 详情页横幅注入：
-  - 在邮件主题下方显示建议标签（当前为示例逻辑：从采集到的标签中随机选择；为空时展示“未检测到左侧标签”）。
+  - 在邮件主题下方显示建议标签；当配置了 API Key 时调用 Qwen/DeepSeek 获取建议，否则提示前往设置页配置。
   - 相关代码：
-    - `content.js:184-233` `injectBanner()`
+    - `content.js:184-283` `injectBanner()`
 
 ## 使用与诊断建议
 - 弹窗日志面板：
@@ -57,11 +57,13 @@
   - `window.GmailCopilot.scanLabels()` 返回解析到的标签数组，便于快速对比。
 
 ## 已实现进度
-- 弹窗日志面板（扫描、复制）。
+- 扁平化标签抓取（`data-tooltip`），降低对导航结构的依赖。
+- 当抓取为空时，写入“快照日志”（tooltip 样本与上下文）到本地存储，便于弹窗查看与诊断。
+- 弹窗日志面板（扫描、复制、实时展示最近扫描状态）。
 - 内容脚本统一日志持久化到 `chrome.storage.local`。
-- 标签选择器重构，适配新版 Gmail 导航结构与虚拟化。
 - 自动“展开更多”与轻滚动触发渲染，提升采集稳定性。
-- 详情页横幅注入（Phase 1 示例逻辑）。
+- 详情页横幅注入；当有 Key 时调用 Qwen/DeepSeek 输出建议标签并更新弹窗状态。
+- 设置中心（Provider/Model/API Key/规则编辑器）。
 
 ## 未解决问题与下一步路线
 - 进一步适配不同语言与主题下的导航 DOM 差异（i18n 选择器兜底）。
@@ -71,10 +73,13 @@
 - 可考虑加入 Service Worker 与消息路由，以支持后台采集与更多交互（当前仅用 storage 变更做桥接，权限更轻）。
 
 ## 复盘（过程与关键决策）
-- 问题背景：用户反馈“拿不到 Gmail 标签”，日志显示 `containerFound: false, anchorCount: 0`。
-- 决策与演进：
-  - 抛弃类名强依赖，改用 `role` + `href` 解析为核心选择器，兼容新版导航结构。
-  - 引入弹窗作为交互式诊断入口，避免用户必须打开 Console 才能查看日志。
+- 2025-12-15（今日）：
+  - 采集策略最终版：根据用户提供的 DOM 证据，重写为“基于 `data-tooltip` 的扁平化抓取”，并加入黑名单与长度阈值；可选容器校验仅作加分项，避免过度绑定导航结构。
+  - 诊断强化：当采集为空时写入“快照日志”到本地存储，包含 tooltip 节点样本与上下文，弹窗即可查看，便于协作模型和人工分析。
+  - 模型接入与上下文：完成 Qwen/DeepSeek 兼容路由与提示词构建，确保仅从用户现有标签中选择，降低幻觉风险。
+  - UI 与交互：横幅状态按配置变化；弹窗展示 Provider/Model/Subject/AI建议；交互式扫描与复制日志稳定运行。
+  - 详情页限制：观察器与路由监听均在详情页生效，避免列表页性能影响。
+  - 版本记录：更新 CHANGELOG，准备版本标签与推送。
   - 日志持久化并提供“一键复制”，降低协作成本。
   - 在采集前自动展开与轻滚动，尽量触发虚拟化渲染。
   - 保持最小权限（`storage`），暂不引入复杂的后台脚本。

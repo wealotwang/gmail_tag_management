@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2025-12-15
+- 重写标签抓取为“基于 `data-tooltip` 的扁平化抓取”，降低对导航结构与 `role` 的依赖。
+- 新增“快照日志”写入到 `chrome.storage.local`，当抓取为空时记录 tooltip 节点样本与上下文。
+- 接入 Qwen/DeepSeek 兼容 API 路由与上下文提示词构建，避免返回不存在的标签。
+- 弹窗状态增加 Provider/Model/Subject/AI建议 展示；交互式扫描与复制日志保持不变。
+- 设置中心（Options）完善：Provider/Model/API Key 持久化与可视化；JSON 规则编辑器基础校验。
+- 仅在详情页触发横幅与扫描，避免列表视图的性能影响。
+
 ## [0.1.0] - 2025-12-14
 - 添加弹窗 UI（`popup.html`/`popup.js`）以展示日志、触发交互式扫描、复制日志。
 - 在内容脚本中统一日志持久化到 `chrome.storage.local`（`LOG_KEY`、`LATEST_KEY`、`TRIGGER_KEY`）。

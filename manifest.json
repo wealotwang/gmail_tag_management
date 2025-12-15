@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "description": "Inject a native-style suggestion banner under the subject in Gmail detail view.",
   "permissions": ["storage"],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_title": "Gmail AI Copilot",
     "default_popup": "popup.html"
