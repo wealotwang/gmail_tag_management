@@ -1,6 +1,7 @@
 const LOG_KEY = 'gmail_copilot_logs';
 const LATEST_KEY = 'gmail_copilot_latestScan';
 const TRIGGER_KEY = 'gmail_copilot_triggerScan';
+const USAGE_KEY = 'gmail_copilot_ai_usage';
 
 function fmt(ts){
   const d = new Date(ts);
@@ -9,9 +10,10 @@ function fmt(ts){
 }
 
 function render(){
-  chrome.storage.local.get([LOG_KEY, LATEST_KEY], items => {
+  chrome.storage.local.get([LOG_KEY, LATEST_KEY, USAGE_KEY], items => {
     const logs = Array.isArray(items[LOG_KEY]) ? items[LOG_KEY] : [];
     const latest = items[LATEST_KEY];
+    const usage = items[USAGE_KEY] || {};
     const txt = logs.map(l => `[${fmt(l.ts)}] ${l.level} ${l.tag} ${l.payload}`).join('\n');
     document.getElementById('log').textContent = txt || '暂无日志';
     if (latest){
@@ -20,9 +22,14 @@ function render(){
       if (latest.model) info.push(`Model: ${latest.model}`);
       if (latest.subject) info.push(`Subject: ${latest.subject}`);
       if (latest.aiLabel) info.push(`AI建议: ${latest.aiLabel}`);
+      const dk = dayKey();
+      if (usage.daily && usage.daily[dk]) info.push(`今日AI: ${usage.daily[dk].count}次 (${usage.daily[dk].chars}字)`);
       document.getElementById('status').textContent = info.join(' | ');
     } else {
-      document.getElementById('status').textContent = '尚未扫描';
+      const dk = dayKey();
+      const info = [];
+      if (usage.daily && usage.daily[dk]) info.push(`今日AI: ${usage.daily[dk].count}次 (${usage.daily[dk].chars}字)`);
+      document.getElementById('status').textContent = info.join(' | ') || '尚未扫描';
     }
   });
 }
@@ -53,3 +60,5 @@ render();
 document.getElementById('settings').addEventListener('click', () => {
   try { chrome.runtime.openOptionsPage(); } catch(e) {}
 });
+
+function dayKey(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }

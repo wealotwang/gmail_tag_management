@@ -16,6 +16,9 @@
   var LOG_KEY = 'gmail_copilot_logs';
   var LATEST_KEY = 'gmail_copilot_latestScan';
   var TRIGGER_KEY = 'gmail_copilot_triggerScan';
+  var USAGE_KEY = 'gmail_copilot_ai_usage';
+  var NUDGE_KEY = 'gmail_copilot_nudge_state';
+  var LABELS_CACHE_KEY = 'gmail_copilot_labels_cache';
   function stringifyPayload(v){
     try {
       if (v === undefined || v === null) return '';
@@ -41,6 +44,12 @@
   function log(tag, payload){ try { console.log('[Gmail Copilot] ' + tag, payload); } catch(e){} pushLog('log', tag, payload); }
   function warn(tag, payload){ try { console.warn('[Gmail Copilot] ' + tag, payload); } catch(e){} pushLog('warn', tag, payload); }
   function err(tag, payload){ try { console.error('[Gmail Copilot] ' + tag, payload); } catch(e){} pushLog('error', tag, payload); }
+
+  function dayKey(){ var d=new Date(); var p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+  async function shouldShowConfigNudge(){ try { var items=await new Promise(r=>chrome.storage.local.get([NUDGE_KEY], r)); var s=items[NUDGE_KEY]; if (!s || s.date!==dayKey()) return true; return (s.count||0) < 3; } catch(e){ return true; } }
+  async function markConfigNudgeShown(){ try { var items=await new Promise(r=>chrome.storage.local.get([NUDGE_KEY], r)); var s=items[NUDGE_KEY]||{}; var today=dayKey(); var cnt=(s.date===today && s.count)||0; var o={}; o[NUDGE_KEY]={ date: today, count: cnt+1 }; chrome.storage.local.set(o); log('Config Nudge Shown', { date: today, count: cnt+1 }); } catch(e){} }
+  async function recordAIUsage(provider, model, sysPrompt, userPrompt){ try { var items=await new Promise(r=>chrome.storage.local.get([USAGE_KEY], r)); var u=items[USAGE_KEY]||{ daily:{}, totalCount:0, totalChars:0 }; var dk=dayKey(); var ch=((sysPrompt||'').length+(userPrompt||'').length); var d=u.daily[dk]||{count:0,chars:0}; d.count++; d.chars+=ch; u.daily[dk]=d; u.totalCount=(u.totalCount||0)+1; u.totalChars=(u.totalChars||0)+ch; var o={}; o[USAGE_KEY]=u; chrome.storage.local.set(o); log('AI Usage Recorded', { date: dk, provider: provider, model: model, chars: ch, dailyCount: d.count, totalCount: u.totalCount }); } catch(e){} }
+  function getAppliedLabels(subjectEl){ var container=(subjectEl && (subjectEl.parentElement||subjectEl)) || (document.querySelector('div[role="main"]')||document.body); var chips=container.querySelectorAll('a[href*="#label/"], a[href*="%23label%2F"], a[href*="label%3A"], span[data-tooltip]'); var out=[]; var blacklist=/^(收件箱|Inbox|星标|Starred|已延后|Snoozed|已发送|Sent|草稿|Drafts|垃圾邮件|Spam|已删除邮件|Trash|类别|Categories)$/i; for (var i=0;i<chips.length;i++){ var el=chips[i]; var name=extractLabelTextFromAnchor(el) || (el.getAttribute('data-tooltip')||'').trim(); if (!name) continue; if (name.length<2 || name.length>50) continue; if (blacklist.test(name)) continue; out.push(name); } return Array.from(new Set(out)); }
 
   /**
    * 获取左侧导航栏中的真实标签列表（更稳健选择器 + href 解析）
@@ -195,16 +204,31 @@
         cfg.model = items['config_model'] || (cfg.provider==='Qwen' ? 'qwen-plus' : 'deepseek-chat');
       }
     } catch(e){}
-    var labels = getLabelsFromLabelSection();
+    var labels = [];
+    try {
+      var cacheItems = await new Promise(function(resolve){ chrome.storage.local.get([LABELS_CACHE_KEY], resolve); });
+      var cache = cacheItems[LABELS_CACHE_KEY];
+      if (cache && Array.isArray(cache.labels) && (Date.now() - (cache.ts||0)) < 30*60*1000) {
+        labels = cache.labels;
+      }
+    } catch(e){}
     var nav = getNavRoot();
-    if ((!labels || !labels.length) && nav){
-      await expandHiddenLabels(nav);
-      scrollNavLightly(nav);
-      await waitForNavReady(nav);
+    if (!labels.length){
       labels = getLabelsFromLabelSection();
+      if ((!labels || !labels.length) && nav){
+        await expandHiddenLabels(nav);
+        scrollNavLightly(nav);
+        await waitForNavReady(nav);
+        labels = getLabelsFromLabelSection();
+      }
+      try { var objCache={}; objCache[LABELS_CACHE_KEY] = { labels: labels, ts: Date.now() }; chrome.storage.local.set(objCache); } catch(e){}
     }
     var emailPreview = getEmailContent();
+    var applied = getAppliedLabels(subjectEl);
+    var candidates = labels.filter(function(l){ return applied.indexOf(l) === -1; });
     log('Labels(section)', labels);
+    log('Labels(applied)', applied);
+    log('Labels(candidates)', candidates);
     log('Email Context', emailPreview);
     if (!labels.length){
       warn('Labels empty - diagnostics', {
@@ -216,7 +240,7 @@
       if (chrome && chrome.storage && chrome.storage.local){
         var subjectText = (subjectEl && (subjectEl.textContent || '').trim()) || '';
         var senderText = (function(){ var m = document.querySelector('div[role="main"]') || document.body; var s = m.querySelector('span.gD, span[email]'); return (s && (s.textContent||'').trim()) || ''; })();
-        var obj={}; obj[LATEST_KEY] = { labels: labels, url: location.href, ts: Date.now(), provider: cfg.provider, model: cfg.model, subject: subjectText, sender: senderText, body: emailPreview };
+        var obj={}; obj[LATEST_KEY] = { labels: labels, applied: applied, candidates: candidates, url: location.href, ts: Date.now(), provider: cfg.provider, model: cfg.model, subject: subjectText, sender: senderText, body: emailPreview };
         chrome.storage.local.set(obj);
       }
     } catch(e){}
@@ -251,26 +275,31 @@
     banner.appendChild(dismissBtn);
     
     if (!cfg.apiKey){
+      var allowNudge = await shouldShowConfigNudge();
+      if (!allowNudge) return;
       textSpan.textContent = '请先在设置页配置 AI 模型';
       confirmBtn.style.display = 'none';
       banner.appendChild(settingsBtn);
       settingsBtn.addEventListener('click', function(){ try { chrome.runtime.openOptionsPage(); } catch(e){} });
+      try { await markConfigNudgeShown(); } catch(e){}
+    } else if (!candidates.length){
+      textSpan.textContent = '暂无推荐：已存在标签或无可匹配';
+      confirmBtn.style.display = 'none';
     } else {
-      textSpan.textContent = '⏳ AI 正在思考 (Qwen)...';
+      textSpan.textContent = '⏳ AI 正在思考...';
       try {
         var ctx = {
           subject: (subjectEl && (subjectEl.textContent || '').trim()) || '',
           sender: (function(){ var m = document.querySelector('div[role="main"]') || document.body; var s = m.querySelector('span.gD, span[email]'); return (s && (s.textContent||'').trim()) || ''; })(),
           body: getEmailContent(),
-          labels: labels
+          labels: candidates
         };
-        log('Context Prepared', { labels: labels, subject: ctx.subject, sender: ctx.sender, bodyPreview: ctx.body });
+        log('Context Prepared', { labels: candidates, subject: ctx.subject, sender: ctx.sender, bodyPreview: ctx.body });
         var ai = await fetchAISuggestion(ctx, cfg.apiKey, cfg.provider, cfg.model);
         var finalLabel = ai && typeof ai === 'string' ? ai.trim() : '';
-        if (!finalLabel) finalLabel = '未分类';
-        textSpan.textContent = '💡 建议归类为 [' + finalLabel + ']';
+        textSpan.textContent = finalLabel ? ('💡 建议归类为 [' + finalLabel + ']') : '暂无推荐';
         try {
-          if (chrome && chrome.storage && chrome.storage.local){ var obj2={}; obj2[LATEST_KEY] = { labels: labels, url: location.href, ts: Date.now(), provider: cfg.provider, model: cfg.model, subject: ctx.subject, sender: ctx.sender, body: ctx.body, aiLabel: finalLabel }; chrome.storage.local.set(obj2); }
+          if (chrome && chrome.storage && chrome.storage.local){ var obj2={}; obj2[LATEST_KEY] = { labels: labels, applied: applied, candidates: candidates, url: location.href, ts: Date.now(), provider: cfg.provider, model: cfg.model, subject: ctx.subject, sender: ctx.sender, body: ctx.body, aiLabel: finalLabel }; chrome.storage.local.set(obj2); }
         } catch(e){}
       } catch(e){
         textSpan.textContent = '配置或网络异常，请在设置页检查 API Key';
@@ -408,6 +437,7 @@
                      '正文摘要: ' + (context.body||'');
     var defaultModel = (/^deepseek/i.test(String(provider||''))) ? 'deepseek-chat' : 'qwen-plus';
     var payload = { model: (model||defaultModel), messages: [ { role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt } ], stream: false };
+    try { await recordAIUsage(provider, (model||defaultModel), sysPrompt, userPrompt); } catch(e){}
     var res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey }, body: JSON.stringify(payload) });
     if (!res.ok){ throw new Error('AI request failed: ' + res.status); }
     var data = await res.json();
