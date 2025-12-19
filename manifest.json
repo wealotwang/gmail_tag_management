@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gmail AI Copilot",
-  "short_name": "Gmail Copilot",
+  "short_name": "GmailCopilot",
   "version": "0.2.0",
   "description": "Suggest Gmail labels with AI in the email detail view.",
   "permissions": ["storage"],
